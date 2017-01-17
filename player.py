@@ -1,4 +1,5 @@
 import gi
+from math import sin, pi, cos
 gi.require_version('Gst', '1.0')
 from gi.repository import GObject, Gst
 
@@ -6,9 +7,6 @@ from gi.repository import GObject, Gst
 GObject.threads_init()
 #Initializes the GStreamer library, setting up internal path lists, registering built-in elements, and loading standard plugins.
 Gst.init(None)
-
-
-#   audioconvert ! audioresample
 
 class Main:
     def __init__(self):
@@ -65,18 +63,28 @@ class Main:
         else:
             pad.link(self.convert1.get_static_pad("sink"))
         
-    #running the shit
     def run(self):
-        Gst.debug_bin_to_dot_file(self.pipeline, Gst.DebugGraphDetails.ALL, "pipeline")
         self.pipeline.set_state(Gst.State.PLAYING)
 
-        bus = self.pipeline.get_bus()
-        msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE,Gst.MessageType.ERROR | Gst.MessageType.EOS)
-        if msg.type == Gst.MessageType.ERROR:
-            err, debug = msg.parse_error()
-            print "Got error ", err, debug
+        mixer_pad0 = self.mixer.get_static_pad("sink_0")
+        mixer_pad1 = self.mixer.get_static_pad("sink_1")
+        mixer_pad1.set_property("volume", 0.0)
 
-#        self.mainloop.run()
+        bus = self.pipeline.get_bus()
+        t = 0
+        while True:
+            msg = bus.timed_pop_filtered(10000000,Gst.MessageType.ERROR | Gst.MessageType.EOS)
+            if msg and msg.type == Gst.MessageType.ERROR:
+                Gst.debug_bin_to_dot_file(self.pipeline, Gst.DebugGraphDetails.ALL, "pipeline")
+                err, debug = msg.parse_error()
+                print "Got error ", err, debug
+                break
+
+            vol0 = ((cos(t / 45.0) + 1) / 2.0)
+            mixer_pad0.set_property("volume", vol0 * 10)
+            mixer_pad1.set_property("volume", (1.0 - vol0) * 10)
+            t += 1
+
 
 start=Main()
 start.run()
