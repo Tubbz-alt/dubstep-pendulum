@@ -1,6 +1,7 @@
 import time
 import sys
 import json
+from math import cos, sin, pi, radians
 from Adafruit_BNO055 import BNO055
 
 # pendulum axis defined:
@@ -28,16 +29,22 @@ BNO_AXIS_REMAP = {
 
 CALIBRATION_THRESHOLD = .5 # degrees
 CALIBRATION_DURATION  = 3 
+LENGTH_CALC_PASSES = 7
 
 class Calibration(object):
 
     def __init__(self, pendulum):
         self.pend = pend
+        self.pend_length = 0.0
         self.cal = []
 
     @property
     def calibration(self):
         return self.cal
+
+    @property
+    def length(self):
+        return self.pend_length
 
     def calibrate(self):
 
@@ -80,18 +87,49 @@ class Calibration(object):
 
         print
 
+    def calculate_length(self):
+        index = 0
+        start = time.time()
+        last_value = pend.sensor.read_euler()
+        last_crossing = 0
+        durations = []
+        while len(durations) < LENGTH_CALC_PASSES:
+            value = list(pend.sensor.read_euler())
+            for i in range(3):
+                value[i] = self.calibration[i] - value[i]
+
+            if last_value[1] >= 0 and value[1] < 0.0:
+                if last_crossing:
+                    durations.append(time.time() - last_crossing)
+                    print "falling zero crossing: %.2f (%.2f)" % (time.time() - start, time.time() - last_crossing)
+                else:
+                    print "falling zero crossing: %.2f" % (time.time() - start)
+                last_crossing = time.time()
+                index += 1
+            last_value = value
+
+        durations = durations[2:]
+        plen = 0.0
+        for l in durations:
+            plen += l 
+
+        t = plen / len(durations)
+        self.pend_length = t * t / 4.0
+
     def save(self):
         if not self.cal:
             return
 
         with open(".calibration", "w") as f:
-            f.write(json.dumps(self.cal))
+            f.write(json.dumps({ 'calibration' : self.cal, 'length' : self.length }))
 
     def load(self):
         try:
             with open(".calibration", "r") as f:
                 c = f.read()
-                self.cal= json.loads(c)
+                data = json.loads(c)
+                self.cal = data['calibration']
+                self.pend_length = data['length']
         except IOError:
             return False
             
@@ -174,7 +212,10 @@ cal = Calibration(Pendulum)
 if not cal.load():
     print "Could not load calibration data. Forcing calibration."
     cal.calibrate()
+    cal.calculate_length()
     cal.save()
+
+print "pendulum length: %.2fm" % cal.length
 
 index = 0
 start = time.time()
@@ -188,14 +229,10 @@ while True:
     for i in range(3):
         value[i] = cal.calibration[i] - value[i]
 
-    if last_value[1] >= 0 and value[1] < 0.0:
-        if last_crossing:
-            print "falling zero crossing: %.2f (%.2f)" % (time.time() - start, time.time() - last_crossing)
-        else:
-            print "falling zero crossing: %.2f" % (time.time() - start)
-        last_crossing = time.time()
-        print "%d,%.3f,%.3f" % (index, value[1] - cal.calibration[1], value[2] - cal.calibration[2])
-        index += 1
+    x = sin(radians(value[1])) * cal.length
+    y = sin(radians(value[2])) * cal.length
+    print "%d,%.3f,%.3f,%.3f,%.3f" % (index, value[1], value[2], x * 100, y * 100)
 
     last_value = value
+    index += 1
 
