@@ -8,8 +8,15 @@ GObject.threads_init()
 #Initializes the GStreamer library, setting up internal path lists, registering built-in elements, and loading standard plugins.
 Gst.init(None)
 
-class Main:
+class WhatTheHellIsThisNoize(object):
+
     def __init__(self):
+        self.done = False
+        self.mainloop = None
+        self.pipeline = None
+
+    def setup(self):
+
         self.mainloop = GObject.MainLoop()
         self.pipeline = Gst.Pipeline.new("pipeline")
 
@@ -22,9 +29,9 @@ class Main:
 
         if not self.mixer or not self.filesrc0 or not self.decode0:
             print "failed to create something"
-            sys.exit(-1)
+            return False
 
-        self.filesrc0.set_property("location", "test-1.mp3")
+        self.filesrc0.set_property("location", "dubstep-track-1.mp3")
         self.pipeline.add(self.filesrc0)
         self.pipeline.add(self.decode0)
         self.decode0.connect("pad-added", self.decode_src_created) 
@@ -43,7 +50,7 @@ class Main:
         self.convert1 = Gst.ElementFactory.make("audioconvert", "convert1")
         self.resample1 = Gst.ElementFactory.make("audioresample", "resample1")
 
-        self.filesrc1.set_property("location", "test-3.mp3")
+        self.filesrc1.set_property("location", "dubstep-track-2.mp3")
         self.pipeline.add(self.filesrc1)
         self.pipeline.add(self.decode1)
         self.decode1.connect("pad-added", self.decode_src_created) 
@@ -54,8 +61,9 @@ class Main:
         self.convert1.link(self.resample1)
         self.resample1.link(self.mixer)
 
+        return True
 
-    #handler taking care of linking the decoder's newly created source pad to the sink
+
     def decode_src_created(self, element, pad):
         index = element.get_name()[-1:]
         if index == '0':
@@ -63,28 +71,38 @@ class Main:
         else:
             pad.link(self.convert1.get_static_pad("sink"))
         
-    def run(self):
+    def start(self):
         self.pipeline.set_state(Gst.State.PLAYING)
+        return self.loop()
+
+    def set_volumes(self, volumes):
+
+        assert(len(volumes) == 2)
 
         mixer_pad0 = self.mixer.get_static_pad("sink_0")
         mixer_pad1 = self.mixer.get_static_pad("sink_1")
-        mixer_pad1.set_property("volume", 0.0)
+        mixer_pad0.set_property("volume", volumes[0] * 10.0)
+        mixer_pad1.set_property("volume", volumes[1] * 10.0)
 
+    def loop(self):
         bus = self.pipeline.get_bus()
-        t = 0
-        while True:
-            msg = bus.timed_pop_filtered(10000000,Gst.MessageType.ERROR | Gst.MessageType.EOS)
-            if msg and msg.type == Gst.MessageType.ERROR:
-                Gst.debug_bin_to_dot_file(self.pipeline, Gst.DebugGraphDetails.ALL, "pipeline")
-                err, debug = msg.parse_error()
-                print "Got error ", err, debug
-                break
+        msg = bus.timed_pop_filtered(10000000,Gst.MessageType.ERROR | Gst.MessageType.EOS)
+        if not msg:
+            return True
+            
+        if msg.type == Gst.MessageType.EOS:
+            self.done = True
+            return True
 
-            vol0 = ((cos(t / 45.0) + 1) / 2.0)
-            mixer_pad0.set_property("volume", vol0 * 10)
-            mixer_pad1.set_property("volume", (1.0 - vol0) * 10)
-            t += 1
+        if msg.type == Gst.MessageType.ERROR:
+            Gst.debug_bin_to_dot_file(self.pipeline, Gst.DebugGraphDetails.ALL, "pipeline")
+            err, debug = msg.parse_error()
+            print "Got error ", err, debug
+            return False
 
 
-start=Main()
-start.run()
+if __name__ == "__main__":
+    noize = WhatTheHellIsThisNoize()
+    noize.start()
+    while not noise.done():
+        sleep(.1)

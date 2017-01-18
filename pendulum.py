@@ -1,8 +1,11 @@
+#!/usr/bin/env python
+
 import time
 import sys
 import json
-from math import cos, sin, pi, radians
+from math import cos, sin, pi, radians, sqrt, pow
 from Adafruit_BNO055 import BNO055
+from player import WhatTheHellIsThisNoize
 
 # pendulum axis defined:
 # looking down on top of the pendulum, the support holes at the top of the 
@@ -201,6 +204,13 @@ class Pendulum(object):
         self.bno = None
 
 
+print "Create noize pipeline"
+noize = WhatTheHellIsThisNoize()
+if not noize.setup():
+    print "Cannot create noise making setup."
+    sys.exit(-1)
+
+print "Create pendulum object"
 pend = Pendulum()
 if not pend.open():
     status, self_test, error = pend.status
@@ -208,6 +218,7 @@ if not pend.open():
     print('See datasheet section 4.3.59 for the meaning.')
     sys.exit(-1)
 
+print "load calibration"
 cal = Calibration(Pendulum)
 if not cal.load():
     print "Could not load calibration data. Forcing calibration."
@@ -216,12 +227,17 @@ if not cal.load():
     cal.save()
 
 print "pendulum length: %.2fm" % cal.length
+if not noize.start():
+    print "Could not start noize pipeline."
+    sys.exit(-1)
 
 index = 0
 start = time.time()
 last_value = pend.sensor.read_euler()
 last_crossing = 0
 print "t,x,y"
+
+sound_sources = [ (40, 0, 250), (-40, 0, 250) ]
 while True:
 
     # read value and normalize according to calibration
@@ -231,8 +247,18 @@ while True:
 
     x = sin(radians(value[1])) * cal.length
     y = sin(radians(value[2])) * cal.length
-    print "%d,%.3f,%.3f,%.3f,%.3f" % (index, value[1], value[2], x * 100, y * 100)
+    if 0: # index % 10 == 0:
+        print "%d,%.3f,%.3f,%.3f,%.3f" % (index, value[1], value[2], x * 100, y * 100)
+
+    volumes = []
+    for i, sources in enumerate(sound_sources):
+        d2 = pow(sources[0] - (x * 100), 2) + pow(sources[1] - (y * 100), 2)
+        print "source[%d]: %.2f %.2f %.2f" % (i, d2, d2 / sources[2], sources[2] / d2)
+        volumes.append(sources[2] / d2)
+
+    noize.set_volumes(volumes)
 
     last_value = value
     index += 1
 
+    noize.loop()
