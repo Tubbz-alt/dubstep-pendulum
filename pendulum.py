@@ -60,7 +60,11 @@ class Calibration(object):
 
         print "\nstarting calibration. hold the pendulim still for fuck sake!"
         while True:
-            last_value = self.pend.sensor.read_euler()
+            try:
+                last_value = self.pend.sensor.read_euler()
+            except RuntimeError as e:
+                continue
+
             values = [0.0, 0.0, 0.0];
             count = 0
             start_t = time.time()
@@ -102,7 +106,7 @@ class Calibration(object):
                 value[i] = self.calibration[i] - value[i]
 
             if last_value[1] >= 0 and value[1] < 0.0:
-                if last_crossing:
+                if last_crossing and time.time() - last_crossing > .1:
                     durations.append(time.time() - last_crossing)
                     print "falling zero crossing: %.2f (%.2f)" % (time.time() - start, time.time() - last_crossing)
                 else:
@@ -233,11 +237,18 @@ if not noize.start():
 
 index = 0
 start = time.time()
-last_value = pend.sensor.read_euler()
-last_crossing = 0
-print "t,x,y"
 
-sound_sources = [ (40, 0, 250), (-40, 0, 250) ]
+while True:
+    try:
+        last_value = pend.sensor.read_euler()
+        break
+    except RuntimeError as e:
+        pass
+
+last_crossing = 0
+print "t,d"
+
+sound_sources = [ (0, 30, 15), (0,-30,15) ]
 while True:
 
     # read value and normalize according to calibration
@@ -251,10 +262,14 @@ while True:
         print "%d,%.3f,%.3f,%.3f,%.3f" % (index, value[1], value[2], x * 100, y * 100)
 
     volumes = []
-    for i, sources in enumerate(sound_sources):
-        d2 = pow(sources[0] - (x * 100), 2) + pow(sources[1] - (y * 100), 2)
-        print "source[%d]: %.2f %.2f %.2f" % (i, d2, d2 / sources[2], sources[2] / d2)
-        volumes.append(sources[2] / d2)
+    for i, source in enumerate(sound_sources):
+        if source[2]:
+            d = sqrt(pow(source[0] - (x * 100), 2) + pow(source[1] - (y * 100), 2))
+            v = 1.0 / pow(((abs(d) / source[2]) + 1), 2)
+#print "%.2f %.3f" % (d, v)
+            volumes.append(1.0 / pow(((d / source[2]) + 1), 2))
+        else:
+            volumes.append(0.0)
 
     noize.set_volumes(volumes)
 

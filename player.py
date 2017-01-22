@@ -20,7 +20,7 @@ class WhatTheHellIsThisNoize(object):
         self.mainloop = GObject.MainLoop()
         self.pipeline = Gst.Pipeline.new("pipeline")
 
-        self.filesrc0 = Gst.ElementFactory.make("filesrc", "filesrc0")
+        self.filesrc0 = Gst.ElementFactory.make("multifilesrc", "filesrc0")
         self.decode0 = Gst.ElementFactory.make("decodebin", "decode0")
         self.convert0 = Gst.ElementFactory.make("audioconvert", "convert0")
         self.resample0 = Gst.ElementFactory.make("audioresample", "resample0")
@@ -32,6 +32,7 @@ class WhatTheHellIsThisNoize(object):
             return False
 
         self.filesrc0.set_property("location", "dubstep-track-1.mp3")
+        self.filesrc0.set_property("loop", "true")
         self.pipeline.add(self.filesrc0)
         self.pipeline.add(self.decode0)
         self.decode0.connect("pad-added", self.decode_src_created) 
@@ -45,12 +46,13 @@ class WhatTheHellIsThisNoize(object):
         self.resample0.link(self.mixer)
         self.mixer.link(self.sink)
         
-        self.filesrc1 = Gst.ElementFactory.make("filesrc", "filesrc1")
+        self.filesrc1 = Gst.ElementFactory.make("multifilesrc", "filesrc1")
         self.decode1 = Gst.ElementFactory.make("decodebin", "decode1")
         self.convert1 = Gst.ElementFactory.make("audioconvert", "convert1")
         self.resample1 = Gst.ElementFactory.make("audioresample", "resample1")
 
         self.filesrc1.set_property("location", "dubstep-track-2.mp3")
+        self.filesrc1.set_property("loop", "true")
         self.pipeline.add(self.filesrc1)
         self.pipeline.add(self.decode1)
         self.decode1.connect("pad-added", self.decode_src_created) 
@@ -81,12 +83,12 @@ class WhatTheHellIsThisNoize(object):
 
         mixer_pad0 = self.mixer.get_static_pad("sink_0")
         mixer_pad1 = self.mixer.get_static_pad("sink_1")
-        mixer_pad0.set_property("volume", volumes[0] * 10.0)
-        mixer_pad1.set_property("volume", volumes[1] * 10.0)
+        mixer_pad0.set_property("volume", min(volumes[0] * 10.0, 10.0))
+        mixer_pad1.set_property("volume", min(volumes[1] * 10.0, 10.0))
 
     def loop(self):
         bus = self.pipeline.get_bus()
-        msg = bus.timed_pop_filtered(10000000,Gst.MessageType.ERROR | Gst.MessageType.EOS)
+        msg = bus.timed_pop_filtered(10000,Gst.MessageType.ERROR | Gst.MessageType.EOS)
         if not msg:
             return True
             
