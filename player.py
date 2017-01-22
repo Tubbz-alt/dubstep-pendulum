@@ -14,77 +14,84 @@ class WhatTheHellIsThisNoize(object):
         self.done = False
         self.mainloop = None
         self.pipeline = None
+        self.sources = []
 
-    def setup(self):
+    def create_source(self, mp3):
+        index = len(self.sources)
+        filesrc = Gst.ElementFactory.make("multifilesrc", "filesrc%d" % index)
+        decode = Gst.ElementFactory.make("decodebin", "decode%d" % index)
+        convert = Gst.ElementFactory.make("audioconvert", "convert%d" % index)
+        resample = Gst.ElementFactory.make("audioresample", "resample%d" % index)
+
+        if not filesrc:
+            print "failed to create filesrc"
+            return False
+        if not decode:
+            print "failed to create decoder"
+            return False
+        if not convert:
+            print "failed to create convert"
+            return False
+        if not resample:
+            print "failed to create resample"
+            return False
+
+        filesrc.set_property("location", mp3)
+        filesrc.set_property("loop", "true")
+
+        self.pipeline.add(filesrc)
+        self.pipeline.add(decode)
+        decode.connect("pad-added", self.decode_src_created) 
+        self.pipeline.add(convert)
+        self.pipeline.add(resample)
+
+        filesrc.link(decode)
+        convert.link(resample)
+
+        self.sources.append(dict(filesrc=filesrc, decode=decode, convert=convert, resample = resample))
+
+        return True
+
+    def decode_src_created(self, element, pad):
+        index = int(element.get_name()[-1:])
+        pad.link(self.sources[index]['convert'].get_static_pad("sink"))
+        
+    def setup(self, sources):
 
         self.mainloop = GObject.MainLoop()
         self.pipeline = Gst.Pipeline.new("pipeline")
 
-        self.filesrc0 = Gst.ElementFactory.make("multifilesrc", "filesrc0")
-        self.decode0 = Gst.ElementFactory.make("decodebin", "decode0")
-        self.convert0 = Gst.ElementFactory.make("audioconvert", "convert0")
-        self.resample0 = Gst.ElementFactory.make("audioresample", "resample0")
+        for source in sources:
+            self.create_source(source['mp3'])
+
         self.mixer = Gst.ElementFactory.make("audiomixer", "mixer")
         self.sink = Gst.ElementFactory.make("alsasink", "sink")
 
-        if not self.mixer or not self.filesrc0 or not self.decode0:
+        if not self.mixer or not self.sink:
             print "failed to create something"
             return False
 
-        self.filesrc0.set_property("location", "dubstep-track-1.mp3")
-        self.filesrc0.set_property("loop", "true")
-        self.pipeline.add(self.filesrc0)
-        self.pipeline.add(self.decode0)
-        self.decode0.connect("pad-added", self.decode_src_created) 
-        self.pipeline.add(self.convert0)
-        self.pipeline.add(self.resample0)
         self.pipeline.add(self.mixer)
         self.pipeline.add(self.sink)
 
-        self.filesrc0.link(self.decode0)
-        self.convert0.link(self.resample0)
-        self.resample0.link(self.mixer)
+        for source in self.sources:
+            source['resample'].link(self.mixer)
+
         self.mixer.link(self.sink)
         
-        self.filesrc1 = Gst.ElementFactory.make("multifilesrc", "filesrc1")
-        self.decode1 = Gst.ElementFactory.make("decodebin", "decode1")
-        self.convert1 = Gst.ElementFactory.make("audioconvert", "convert1")
-        self.resample1 = Gst.ElementFactory.make("audioresample", "resample1")
-
-        self.filesrc1.set_property("location", "dubstep-track-2.mp3")
-        self.filesrc1.set_property("loop", "true")
-        self.pipeline.add(self.filesrc1)
-        self.pipeline.add(self.decode1)
-        self.decode1.connect("pad-added", self.decode_src_created) 
-        self.pipeline.add(self.convert1)
-        self.pipeline.add(self.resample1)
-
-        self.filesrc1.link(self.decode1)
-        self.convert1.link(self.resample1)
-        self.resample1.link(self.mixer)
-
         return True
 
 
-    def decode_src_created(self, element, pad):
-        index = element.get_name()[-1:]
-        if index == '0':
-            pad.link(self.convert0.get_static_pad("sink"))
-        else:
-            pad.link(self.convert1.get_static_pad("sink"))
-        
     def start(self):
         self.pipeline.set_state(Gst.State.PLAYING)
         return self.loop()
 
     def set_volumes(self, volumes):
+        assert(len(volumes) == len(self.sources))
 
-        assert(len(volumes) == 2)
-
-        mixer_pad0 = self.mixer.get_static_pad("sink_0")
-        mixer_pad1 = self.mixer.get_static_pad("sink_1")
-        mixer_pad0.set_property("volume", min(volumes[0] * 10.0, 10.0))
-        mixer_pad1.set_property("volume", min(volumes[1] * 10.0, 10.0))
+        for i, volume in enumerate(volumes):
+            mixer_pad = self.mixer.get_static_pad("sink_%d" % i)
+            mixer_pad.set_property("volume", min(volumes[i] * 10.0, 10.0))
 
     def loop(self):
         bus = self.pipeline.get_bus()

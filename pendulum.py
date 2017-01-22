@@ -207,10 +207,16 @@ class Pendulum(object):
         self.bno.close()
         self.bno = None
 
+sound_sources = [ 
+    dict(x = 40, y = 40, r = 15.0, mp3="440.mp3"),
+    dict(x = -40, y = 40, r = 15.0, mp3="660.mp3"),
+    dict(x = -40, y = -40, r = 15.0, mp3="880.mp3"),
+    dict(x = 40, y = -40, r = 15.0, mp3="1320.mp3"),
+]
 
 print "Create noize pipeline"
 noize = WhatTheHellIsThisNoize()
-if not noize.setup():
+if not noize.setup(sound_sources):
     print "Cannot create noise making setup."
     sys.exit(-1)
 
@@ -248,7 +254,6 @@ while True:
 last_crossing = 0
 print "t,d"
 
-sound_sources = [ (0, 30, 15), (0,-30,15) ]
 while True:
 
     # read value and normalize according to calibration
@@ -263,11 +268,10 @@ while True:
 
     volumes = []
     for i, source in enumerate(sound_sources):
-        if source[2]:
-            d = sqrt(pow(source[0] - (x * 100), 2) + pow(source[1] - (y * 100), 2))
-            v = 1.0 / pow(((abs(d) / source[2]) + 1), 2)
-#print "%.2f %.3f" % (d, v)
-            volumes.append(1.0 / pow(((d / source[2]) + 1), 2))
+        if source['r']:
+            d = sqrt(pow(source['x'] - (x * 100), 2) + pow(source['y'] - (y * 100), 2))
+            v = 1.0 / pow(((abs(d) / source['r']) + 1), 2)
+            volumes.append(v)
         else:
             volumes.append(0.0)
 
