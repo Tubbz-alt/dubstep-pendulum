@@ -146,8 +146,33 @@ MAX_SENSOR_BEGIN_COUNT = 3
 MAX_SENSOR_ERROR_COUNT = 3
 class Pendulum(object):
 
+    MAX_WINDOW_SIZE = 100
+
+    STATE_START   = 0
+    STATE_IDLE    = 1
+    STATE_PULL_UP = 2
+    STATE_DROP    = 3
+    STATE_WOBBLE  = 4
+
+    EVENT_IDLE    = 0
+    EVENT_PULL_UP = 1
+    EVENT_DROP    = 2
+    EVENT_WOBBLE  = 3
+
+    table = (
+        (STATE_START,    EVENT_IDLE,    STATE_IDLE),
+        (STATE_IDLE,     EVENT_PULL_UP, STATE_PULL_UP),
+        (STATE_PULL_UP,  EVENT_DROP,    STATE_DROP),
+        (STATE_PULL_UP,  EVENT_IDLE,    STATE_IDLE),
+        (STATE_DROP,     EVENT_WOBBLE,  STATE_WOBBLE),
+        (STATE_WOBBLE,   EVENT_IDLE,    STATE_IDLE),
+        (STATE_WOBBLE,   EVENT_PULL_UP, STATE_PULL_UP),
+    )
+
     def __init__(self):
         self.bno = None
+        self.cur_state = self.STATE_START
+        self.window = []
 
     @property
     def sensor(self):
@@ -203,16 +228,157 @@ class Pendulum(object):
 
         return True
 
+    def is_idle(self):
+        MIN_ANGLE_FOR_IDLE = 5
+        IDLE_SAMPLES = 50
+        if len(self.window) < IDLE_SAMPLES:
+            return False
+
+        for value in self.window[-IDLE_SAMPLES:]:
+            #print "i %.3f %.3f" % (value[1], value[2])
+            if abs(value[1]) > MIN_ANGLE_FOR_IDLE or abs(value[2]) > MIN_ANGLE_FOR_IDLE:
+                return False
+
+        return True
+
+    def is_pull_up(self):
+        MAX_CHANGE_PER_SAMPLE = .2
+        MIN_ANGLE_FOR_PULL_UP = 5
+        PULL_UP_SAMPLES = 50
+        if len(self.window) < PULL_UP_SAMPLES:
+            return False
+
+        samples = self.window[-PULL_UP_SAMPLES:]
+        for i, value in enumerate(samples):
+            #print "%.3f %.3f" % (value[1], value[2])
+            if not i:
+                continue
+
+            if abs(value[1]) < MIN_ANGLE_FOR_PULL_UP and abs(value[2]) < MIN_ANGLE_FOR_PULL_UP:
+                return False
+
+            if abs(value[1] - samples[i-1][1]) > MAX_CHANGE_PER_SAMPLE or abs(value[2] - samples[i-1][2]) > MAX_CHANGE_PER_SAMPLE:
+                return False
+
+        return True
+
+    def is_drop(self):
+
+        return False
+
+        MAX_CHANGE_PER_SAMPLE = .2
+        MIN_ANGLE_FOR_PULL_UP = 5
+        PULL_UP_SAMPLES = 50
+        if len(self.window) < PULL_UP_SAMPLES:
+            return False
+
+        samples = self.window[-PULL_UP_SAMPLES:]
+        for i, value in enumerate(samples):
+            print "%.3f %.3f" % (value[1], value[2])
+            if not i:
+                continue
+
+            if abs(value[1]) < MIN_ANGLE_FOR_PULL_UP and abs(value[2]) < MIN_ANGLE_FOR_PULL_UP:
+                return False
+
+            if abs(value[1] - samples[i-1][1]) > MAX_CHANGE_PER_SAMPLE or abs(value[2] - samples[i-1][2]) > MAX_CHANGE_PER_SAMPLE:
+                return False
+
+        return True
+ 
+    def loop(self):
+        # read value and normalize according to calibration
+        value = list(pend.sensor.read_euler())
+        for i in range(3):
+            value[i] = cal.calibration[i] - value[i]
+
+        self.window.append(value)
+        if len(self.window) == self.MAX_WINDOW_SIZE:
+            self.window = self.window[-self.MAX_WINDOW_SIZE:]
+
+    def state_start(self):
+        print "STATE start. waiting for idle."
+        while not self.is_idle():
+            self.loop()
+
+        return self.EVENT_IDLE
+
+    def state_idle(self):
+        print "STATE idle. waiting for pull-up."
+        while not self.is_pull_up():
+            self.loop()
+
+        return self.EVENT_PULL_UP
+
+    def state_pull_up(self):
+        print "STATE pull up. waiting for drop or idle."
+        while True:
+            if self.is_drop():
+                return self.EVENT_DROP
+            if self.is_idle():
+                return self.EVENT_IDLE
+            self.loop()
+
+    def state_drop(self):
+        print "state drop, not implemented"
+        sys.exit(-1)
+
+    def state_wobble(self):
+        print "state wobble, not implemented"
+        sys.exit(-1)
+
+    def run(self):
+        next_event = self.state_start()
+        while True:
+            done = False
+            for from_state, event, next_state in self.table:
+                if from_state == self.cur_state and next_event == event:
+                    print "Cur: %d Event: %d Next: %d" % (self.cur_state, event, next_state)
+                    if next_state == self.STATE_IDLE:
+                        self.cur_state = self.STATE_IDLE
+                        next_event = self.state_idle()
+                        done = True
+                    elif next_state == self.STATE_PULL_UP:
+                        self.cur_state = self.STATE_PULL_UP
+                        next_event = self.state_pull_up()
+                        done = True
+                    elif next_state == self.STATE_DROP:
+                        self.cur_state = self.STATE_DROP
+                        next_event = self.state_drop()
+                        done = True
+                    elif next_state == self.STATE_WOBBLE:
+                        self.cur_state = self.STATE_WOBBLE
+                        next_event = self.state_wobble()
+                        done = True
+                    else:
+                        print "oops. Unknown event %d from state %d" % (next_event, self.cur_state)
+
+                    break
+
+            if not done:
+                print "Unknown event %d from state %d" % (next_event, self.cur_state)
+                return
+
     def close(self):
         self.bno.close()
         self.bno = None
 
 sound_sources = [ 
-    dict(x = 40, y = 40, r = 15.0, mp3="440.mp3"),
-    dict(x = -40, y = 40, r = 15.0, mp3="660.mp3"),
-    dict(x = -40, y = -40, r = 15.0, mp3="880.mp3"),
-    dict(x = 40, y = -40, r = 15.0, mp3="1320.mp3"),
+    dict(x = 20, y = 20, r = 10.0, mp3="music/dubstep-bass-1.mp3"),
+    dict(x = -20, y = 20, r = 10.0, mp3="dubstep-track-2.mp3"),
+    dict(x = -20, y = -20, r = 10.0, mp3="music/dubstep-bass-2.mp3"),
+#    dict(x = 20, y = -20, r = 10.0, mp3="dubstep-track-4.mp3"),
 ]
+
+if len(sys.argv) > 1:
+    for i, arg in enumerate(sys.argv):
+        if not i:
+            continue
+        if i >= len(sound_sources):
+            break
+
+        sound_sources[i - 1]['mp3'] = sys.argv[i]
+        
 
 print "Create noize pipeline"
 noize = WhatTheHellIsThisNoize()
@@ -237,9 +403,9 @@ if not cal.load():
     cal.save()
 
 print "pendulum length: %.2fm" % cal.length
-if not noize.start():
-    print "Could not start noize pipeline."
-    sys.exit(-1)
+#if not noize.start():
+#    print "Could not start noize pipeline."
+#    sys.exit(-1)
 
 index = 0
 start = time.time()
@@ -251,8 +417,8 @@ while True:
     except RuntimeError as e:
         pass
 
-last_crossing = 0
-print "t,d"
+pend.run()
+sys.exit(0)
 
 while True:
 
@@ -263,8 +429,6 @@ while True:
 
     x = sin(radians(value[1])) * cal.length
     y = sin(radians(value[2])) * cal.length
-    if 0: # index % 10 == 0:
-        print "%d,%.3f,%.3f,%.3f,%.3f" % (index, value[1], value[2], x * 100, y * 100)
 
     volumes = []
     for i, source in enumerate(sound_sources):
