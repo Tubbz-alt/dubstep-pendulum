@@ -3,9 +3,20 @@
 import time
 import sys
 import json
-from math import cos, sin, pi, radians, sqrt, pow
+from math import cos, sin, pi, radians, sqrt, pow, degrees
 from Adafruit_BNO055 import BNO055
 from player import WhatTheHellIsThisNoize
+import numpy as np
+from pykalman import KalmanFilter
+
+def unit_vector(vector):
+    """ Returns the unit vector of the vector.  """
+    return vector / np.linalg.norm(vector)
+
+def angle_between(v1, v2):
+    v1_u = unit_vector(v1)
+    v2_u = unit_vector(v2)
+    return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
 # pendulum axis defined:
 # looking down on top of the pendulum, the support holes at the top of the 
@@ -20,15 +31,6 @@ from player import WhatTheHellIsThisNoize
 # heading - rotation about z
 # roll    - rotation about x
 # pitch   - rotation about y
-
-BNO_AXIS_REMAP = { 
-    'x': BNO055.AXIS_REMAP_X,
-    'y': BNO055.AXIS_REMAP_Z,
-    'z': BNO055.AXIS_REMAP_Y,
-    'x_sign': BNO055.AXIS_REMAP_POSITIVE,
-    'y_sign': BNO055.AXIS_REMAP_POSITIVE,
-    'z_sign': BNO055.AXIS_REMAP_NEGATIVE 
-}
 
 CALIBRATION_THRESHOLD = .5 # degrees
 CALIBRATION_DURATION  = 3 
@@ -95,6 +97,8 @@ class Calibration(object):
         print
 
     def calculate_length(self):
+
+        print "Calculate length"
         index = 0
         start = time.time()
         last_value = pend.sensor.read_euler()
@@ -114,6 +118,8 @@ class Calibration(object):
                 last_crossing = time.time()
                 index += 1
             last_value = value
+
+        print "done"
 
         durations = durations[2:]
         plen = 0.0
@@ -146,7 +152,7 @@ MAX_SENSOR_BEGIN_COUNT = 3
 MAX_SENSOR_ERROR_COUNT = 3
 class Pendulum(object):
 
-    MAX_WINDOW_SIZE = 100
+    WINDOW_SIZE = 100 
 
     STATE_START   = 0
     STATE_IDLE    = 1
@@ -158,6 +164,8 @@ class Pendulum(object):
     EVENT_PULL_UP = 1
     EVENT_DROP    = 2
     EVENT_WOBBLE  = 3
+
+    gravity = (0.0, 0.0, -9.81)
 
     table = (
         (STATE_START,    EVENT_IDLE,    STATE_IDLE),
@@ -173,6 +181,11 @@ class Pendulum(object):
         self.bno = None
         self.cur_state = self.STATE_START
         self.window = []
+        self.last_angle = None
+
+        self.kf = KalmanFilter(initial_state_mean=0, n_dim_obs=1)
+        self.point = None
+        self.covariance = [ [0.0], [0.0], [0.0] ]
 
     @property
     def sensor(self):
@@ -185,7 +198,7 @@ class Pendulum(object):
 
         return self.bno.get_system_status()
 
-    def open(self, serial_port='/dev/ttyAMA0', rst=18):
+    def open(self, serial_port='/dev/serial0', rst=18):
         self.bno = BNO055.BNO055(serial_port=serial_port, rst=rst)
 
         count = 0
@@ -206,7 +219,6 @@ class Pendulum(object):
         status = -1
         while True:
             try:
-                self.bno.set_axis_remap(**BNO_AXIS_REMAP)
                 status, self_test, error = self.bno.get_system_status()
                 if self_test != 0x0F:
                     print('Self test result (0x0F is normal): 0x{0:02X}'.format(self_test))
@@ -225,6 +237,8 @@ class Pendulum(object):
 
         if status == 0x01:
             return False
+
+        print "Sensor setup complete."
 
         return True
 
@@ -288,13 +302,29 @@ class Pendulum(object):
  
     def loop(self):
         # read value and normalize according to calibration
-        value = list(pend.sensor.read_euler())
-        for i in range(3):
-            value[i] = cal.calibration[i] - value[i]
+        value = list(pend.sensor.read_accelerometer())
+        t = time.time()
 
-        self.window.append(value)
-        if len(self.window) == self.MAX_WINDOW_SIZE:
-            self.window = self.window[-self.MAX_WINDOW_SIZE:]
+        (self.point[0], self.covariance[0]) = self.kf.filter_update(self.point[0], self.covariance[0], value[0])
+        (self.point[1], self.covariance[1]) = self.kf.filter_update(self.point[1], self.covariance[1], value[1])
+        (self.point[2], self.covariance[2]) = self.kf.filter_update(self.point[2], self.covariance[2], value[2])
+
+        angle = degrees(angle_between(self.point, self.gravity))
+
+        if len(self.window) == self.WINDOW_SIZE:
+            self.window = self.window[1:]
+        self.window.append((angle,t))
+
+        time_diff = self.window[len(self.window) - 1][1] - self.window[0][1]
+        if time_diff:
+            self.a_accel = (self.window[0][0] - self.window[len(self.window) - 1][0]) / time_diff
+        else:
+            self.a_accel = 0.0
+
+        self.angle = angle
+
+#        print "%f,%f,%f" % (t, angle, self.a_accel)
+
 
     def state_start(self):
         print "STATE start. waiting for idle."
@@ -380,13 +410,13 @@ if len(sys.argv) > 1:
         sound_sources[i - 1]['mp3'] = sys.argv[i]
         
 
-print "Create noize pipeline"
-noize = WhatTheHellIsThisNoize()
-if not noize.setup(sound_sources):
-    print "Cannot create noise making setup."
-    sys.exit(-1)
+#print "Create noize pipeline"
+#noize = WhatTheHellIsThisNoize()
+#if not noize.setup(sound_sources):
+#    print "Cannot create noise making setup."
+#    sys.exit(-1)
 
-print "Create pendulum object"
+#print "Create pendulum object"
 pend = Pendulum()
 if not pend.open():
     status, self_test, error = pend.status
@@ -412,36 +442,12 @@ start = time.time()
 
 while True:
     try:
-        last_value = pend.sensor.read_euler()
+        last_value = pend.sensor.read_accelerometer()
         break
     except RuntimeError as e:
         pass
 
+print "t,a,acc"
 pend.run()
 sys.exit(0)
 
-while True:
-
-    # read value and normalize according to calibration
-    value = list(pend.sensor.read_euler())
-    for i in range(3):
-        value[i] = cal.calibration[i] - value[i]
-
-    x = sin(radians(value[1])) * cal.length
-    y = sin(radians(value[2])) * cal.length
-
-    volumes = []
-    for i, source in enumerate(sound_sources):
-        if source['r']:
-            d = sqrt(pow(source['x'] - (x * 100), 2) + pow(source['y'] - (y * 100), 2))
-            v = 1.0 / pow(((abs(d) / source['r']) + 1), 2)
-            volumes.append(v)
-        else:
-            volumes.append(0.0)
-
-    noize.set_volumes(volumes)
-
-    last_value = value
-    index += 1
-
-    noize.loop()
